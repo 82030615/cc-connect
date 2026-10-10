@@ -308,13 +308,22 @@ func captureStderr(t *testing.T, fn func()) string {
 		os.Stderr = old
 	}()
 
+	// Drain concurrently. A Windows anonymous pipe buffers only 4KB, and
+	// printUsage emits its whole help text in a single Fprintf, so reading
+	// after fn returns deadlocks as soon as that output exceeds the buffer.
+	var buf bytes.Buffer
+	done := make(chan error, 1)
+	go func() {
+		_, err := io.Copy(&buf, r)
+		done <- err
+	}()
+
 	fn()
 
 	if err := w.Close(); err != nil {
 		t.Fatalf("close writer: %v", err)
 	}
-	var buf bytes.Buffer
-	if _, err := io.Copy(&buf, r); err != nil {
+	if err := <-done; err != nil {
 		t.Fatalf("copy stderr: %v", err)
 	}
 	if err := r.Close(); err != nil {
